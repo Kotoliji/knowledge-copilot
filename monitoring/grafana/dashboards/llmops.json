@@ -1,0 +1,33 @@
+{
+  "title": "Knowledge Copilot - LLMOps",
+  "uid": "llmops",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {"id": 1, "type": "stat", "title": "LLM requests / min", "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+     "targets": [{"expr": "sum(rate(llm_requests_total[5m])) * 60", "datasource": {"uid": "prom"}}]},
+    {"id": 2, "type": "stat", "title": "Error rate", "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+     "fieldConfig": {"defaults": {"unit": "percentunit", "thresholds": {"steps": [{"color": "green"}, {"color": "red", "value": 0.05}]}}},
+     "targets": [{"expr": "sum(rate(llm_requests_total{status=\"error\"}[5m])) / sum(rate(llm_requests_total[5m]))", "datasource": {"uid": "prom"}}]},
+    {"id": 3, "type": "stat", "title": "Spend (24h, USD)", "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+     "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 4}},
+     "targets": [{"expr": "sum(increase(llm_cost_usd_total[24h]))", "datasource": {"uid": "prom"}}]},
+    {"id": 4, "type": "stat", "title": "No-context answers (1h)", "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+     "targets": [{"expr": "sum(increase(rag_no_context_total[1h]))", "datasource": {"uid": "prom"}}]},
+    {"id": 5, "type": "timeseries", "title": "LLM latency p50 / p95", "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+     "fieldConfig": {"defaults": {"unit": "s"}},
+     "targets": [
+       {"expr": "histogram_quantile(0.5, sum(rate(llm_latency_seconds_bucket[5m])) by (le, kind))", "legendFormat": "p50 {{kind}}", "datasource": {"uid": "prom"}},
+       {"expr": "histogram_quantile(0.95, sum(rate(llm_latency_seconds_bucket[5m])) by (le, kind))", "legendFormat": "p95 {{kind}}", "datasource": {"uid": "prom"}}]},
+    {"id": 6, "type": "timeseries", "title": "Tokens / min by model", "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+     "targets": [{"expr": "sum(rate(llm_tokens_total[5m])) by (model, type) * 60", "legendFormat": "{{model}} {{type}}", "datasource": {"uid": "prom"}}]},
+    {"id": 7, "type": "heatmap", "title": "Retrieval top score (low = unanswerable / bad retrieval)", "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+     "targets": [{"expr": "sum(increase(rag_retrieval_top_score_bucket[1m])) by (le)", "format": "heatmap", "datasource": {"uid": "prom"}}]},
+    {"id": 8, "type": "timeseries", "title": "Agent tool calls / min", "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+     "targets": [{"expr": "sum(rate(agent_tool_calls_total[5m])) by (tool, status) * 60", "legendFormat": "{{tool}} {{status}}", "datasource": {"uid": "prom"}}]},
+    {"id": 9, "type": "timeseries", "title": "HTTP p95 latency by endpoint", "gridPos": {"x": 0, "y": 20, "w": 24, "h": 7},
+     "fieldConfig": {"defaults": {"unit": "s"}},
+     "targets": [{"expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path))", "legendFormat": "{{path}}", "datasource": {"uid": "prom"}}]}
+  ]
+}

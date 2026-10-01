@@ -1,0 +1,25 @@
+groups:
+  - name: llmops
+    rules:
+      - alert: LLMErrorRateHigh
+        expr: sum(rate(llm_requests_total{status="error"}[5m])) / sum(rate(llm_requests_total[5m])) > 0.05
+        for: 5m
+        labels: {severity: page}
+        annotations: {summary: "More than 5% of LLM calls are failing"}
+
+      - alert: LLMLatencyP95High
+        expr: histogram_quantile(0.95, sum(rate(llm_latency_seconds_bucket{kind=~"chat.*"}[5m])) by (le)) > 8
+        for: 10m
+        labels: {severity: warn}
+        annotations: {summary: "p95 LLM latency above 8s"}
+
+      - alert: RAGNoContextSpike
+        expr: sum(rate(rag_no_context_total[15m])) / sum(rate(http_request_duration_seconds_count{path="/ask"}[15m])) > 0.4
+        for: 15m
+        labels: {severity: warn}
+        annotations: {summary: "Over 40% of questions find no relevant context - docs missing or retrieval degraded"}
+
+      - alert: LLMSpendBudget
+        expr: sum(increase(llm_cost_usd_total[24h])) > 20
+        labels: {severity: warn}
+        annotations: {summary: "LLM spend above 20 USD in the last 24h"}

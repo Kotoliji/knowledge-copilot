@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge Copilot</title>
+<style>
+  :root { --bg:#0f1117; --panel:#181b24; --border:#2a2f3d; --text:#e6e8ef; --muted:#8b91a3; --accent:#6c8cff; --ok:#4cc38a; --warn:#f5a623; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin-bottom: 20px; font-size: 13px; }
+  .row { display:flex; gap:8px; flex-wrap: wrap; }
+  textarea { flex:1; min-width: 240px; min-height: 70px; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text); font: inherit; resize: vertical; }
+  button { padding: 10px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--accent); color: #fff; font: inherit; cursor:pointer; }
+  button.secondary { background: var(--panel); color: var(--text); }
+  button:disabled { opacity:.5; cursor: default; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px; margin-top:16px; }
+  .meta { color:var(--muted); font-size:12px; margin-top:8px; display:flex; gap:12px; flex-wrap:wrap; }
+  .badge { padding:1px 8px; border-radius: 99px; border:1px solid var(--border); }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  pre { white-space: pre-wrap; background: var(--bg); padding: 10px; border-radius: 8px; font-size: 12px; margin: 6px 0; }
+  .cite { border-left: 3px solid var(--accent); padding-left: 10px; margin: 8px 0; font-size: 13px; }
+  .cite b { color: var(--accent); }
+  .examples button { font-size: 12px; padding: 4px 10px; }
+  label.upload { font-size: 13px; color: var(--muted); cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Knowledge Copilot</h1>
+  <div class="sub" id="status">connecting…</div>
+
+  <div class="row">
+    <textarea id="q" placeholder="Ask about company policies, products, procedures…"></textarea>
+  </div>
+  <div class="row" style="margin-top:8px; align-items:center">
+    <button id="ask">Ask (RAG)</button>
+    <button id="agent" class="secondary">Ask agent (tools)</button>
+    <label class="upload">+ upload .md/.txt/.pdf <input type="file" id="file" hidden accept=".md,.txt,.pdf"></label>
+  </div>
+  <div class="row examples" style="margin-top:10px">
+    <button class="secondary" data-q="How many vacation days do employees get per year?">vacation days</button>
+    <button class="secondary" data-q="What is the on-call escalation process?">on-call escalation</button>
+    <button class="secondary" data-q="If I have 24 vacation days and used 7, how many are left? Also what is the carry-over rule?">agent: calc + policy</button>
+    <button class="secondary" data-q="What is the capital of France?">off-topic (should refuse)</button>
+  </div>
+
+  <div id="out"></div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const out = $('#out');
+
+async function health() {
+  try {
+    const h = await (await fetch('/health')).json();
+    $('#status').textContent = `LLM ${h.llm.provider}/${h.llm.model} · embeddings ${h.embeddings.provider}/${h.embeddings.model} (${h.embeddings.dim}d) · ${h.vector_store.chunks} chunks in Qdrant`;
+  } catch { $('#status').textContent = 'API unreachable'; }
+}
+health();
+
+function card(html) { const d = document.createElement('div'); d.className='card'; d.innerHTML = html; out.prepend(d); }
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+async function call(path, body, btn) {
+  btn.disabled = true; const t0 = performance.now();
+  try {
+    const r = await fetch(path, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+    const data = await r.json(); const ms = Math.round(performance.now() - t0);
+    if (!r.ok) return card(`<b>Error ${r.status}</b><pre>${esc(JSON.stringify(data, null, 2))}</pre>`);
+    render(path, body.question, data, ms);
+  } finally { btn.disabled = false; }
+}
+
+function render(path, q, d, ms) {
+  let html = `<div style="color:var(--muted);font-size:13px">${esc(q)}</div><div style="margin-top:6px;font-size:16px">${esc(d.answer)}</div>`;
+  if (path === '/ask') {
+    html += `<div class="meta"><span class="badge ${d.grounded?'ok':'warn'}">${d.grounded?'grounded':'no answer / ungrounded'}</span><span>${d.prompt_version}</span><span>${d.model}</span><span>${d.usage.prompt_tokens}+${d.usage.completion_tokens} tok</span><span>${ms} ms</span></div>`;
+    for (const c of d.citations) html += `<div class="cite"><b>[${c.n}]</b> ${esc(c.source)} — ${esc(c.heading)} <span style="color:var(--muted)">(score ${c.score})</span><details><summary>passage</summary><pre>${esc(c.text)}</pre></details></div>`;
+  } else {
+    html += `<div class="meta"><span class="badge ${d.stopped_by_budget?'warn':'ok'}">${d.steps} LLM steps · ${d.trace.length} tool calls</span><span>${d.prompt_version}</span><span>${d.model}</span><span>${d.usage.prompt_tokens}+${d.usage.completion_tokens} tok</span><span>${ms} ms</span></div>`;
+    if (d.trace.length) html += `<details open><summary>agent trace</summary>` + d.trace.map(t => `<pre>step ${t.step} → <b>${esc(t.tool)}</b>(${esc(JSON.stringify(t.arguments))})${t.error?' ❌':''}\n${esc(t.result.slice(0, 600))}${t.result.length>600?'…':''}</pre>`).join('') + `</details>`;
+  }
+  card(html);
+}
+
+$('#ask').onclick = () => call('/ask', {question: $('#q').value}, $('#ask'));
+$('#agent').onclick = () => call('/agent', {question: $('#q').value}, $('#agent'));
+document.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { $('#q').value = b.dataset.q; });
+$('#file').onchange = async e => {
+  const fd = new FormData(); fd.append('file', e.target.files[0]);
+  const r = await fetch('/ingest', {method:'POST', body: fd}); const d = await r.json();
+  card(r.ok ? `Ingested <b>${esc(d.source)}</b>: ${d.chunks} chunks (total ${d.total_chunks})` : `<b>Error</b> ${esc(d.detail)}`);
+  health();
+};
+</script>
+</body>
+</html>

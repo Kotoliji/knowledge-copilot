@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt ruff
+      - run: ruff check app tests evals
+      - run: pytest -q
+      # Offline eval gate: with the fake LLM retrieval quality is what we measure.
+      - run: python -m evals.run_eval --fail-under 0.8
+      - uses: actions/upload-artifact@v4
+        with: { name: eval-results, path: evals/results }
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t knowledge-copilot:${{ github.sha }} .
+
+  # Real-model eval, only on main and only if secrets exist (costs money).
+  eval-live:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      LLM_PROVIDER: openai
+      EMBEDDING_PROVIDER: openai
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt
+      - run: if [ -n "$OPENAI_API_KEY" ]; then python -m evals.run_eval --fail-under 0.85; else echo "no key, skipped"; fi

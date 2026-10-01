@@ -1,0 +1,18 @@
+{"question": "How many vacation days do full-time employees get per year?", "expected_source": "hr_vacation_policy.md", "must_contain": ["24"], "answerable": true}
+{"question": "How many unused vacation days can be carried over to the next year?", "expected_source": "hr_vacation_policy.md", "must_contain": ["5"], "answerable": true}
+{"question": "How much notice is needed for a vacation longer than 3 days?", "expected_source": "hr_vacation_policy.md", "must_contain": ["10"], "answerable": true}
+{"question": "How long is parental leave for the primary caregiver?", "expected_source": "hr_vacation_policy.md", "must_contain": ["16"], "answerable": true}
+{"question": "What is the response time for a SEV1 incident?", "expected_source": "engineering_oncall_runbook.md", "must_contain": ["15"], "answerable": true}
+{"question": "What happens if the on-call engineer does not acknowledge a page?", "expected_source": "engineering_oncall_runbook.md", "must_contain": ["secondary"], "answerable": true}
+{"question": "When does the on-call rotation switch?", "expected_source": "engineering_oncall_runbook.md", "must_contain": ["Monday"], "answerable": true}
+{"question": "How much is the weekly on-call allowance?", "expected_source": "engineering_oncall_runbook.md", "must_contain": ["150"], "answerable": true}
+{"question": "How much does the Team plan of Nimbus Analytics cost?", "expected_source": "product_faq.md", "must_contain": ["199"], "answerable": true}
+{"question": "How long is data retained on the Starter plan?", "expected_source": "product_faq.md", "must_contain": ["90"], "answerable": true}
+{"question": "Which data warehouses does Nimbus integrate with?", "expected_source": "product_faq.md", "must_contain": ["Snowflake"], "answerable": true}
+{"question": "Is Nimbus SOC 2 certified?", "expected_source": "product_faq.md", "must_contain": ["SOC 2"], "answerable": true}
+{"question": "What is the minimum password length?", "expected_source": "it_security_policy.md", "must_contain": ["14"], "answerable": true}
+{"question": "How quickly must a lost laptop be reported?", "expected_source": "it_security_policy.md", "must_contain": ["24"], "answerable": true}
+{"question": "How often is production access reviewed?", "expected_source": "it_security_policy.md", "must_contain": ["90"], "answerable": true}
+{"question": "What is the capital of France?", "expected_source": null, "must_contain": [], "answerable": false}
+{"question": "Who won the 2018 football world cup?", "expected_source": null, "must_contain": [], "answerable": false}
+{"question": "Can I bring my dog to the office?", "expected_source": null, "must_contain": [], "answerable": false}
