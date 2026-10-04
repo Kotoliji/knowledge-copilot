@@ -12,6 +12,10 @@ question ──> embed ──> Qdrant (cosine top-k) ──> prompt (versioned) 
    .md/.txt/.pdf ──> chunk ──> embed┘               agent loop: LLM ──> tool ──> LLM ──> … ──> answer
 ```
 
+![Knowledge Copilot UI — agent trace and RAG answer side by side](docs/ui-demo.png)
+
+![Knowledge Copilot UI — agent tool call with citation and source score](docs/ui-agent-trace.png)
+
 | Layer | What is here | Where |
 |---|---|---|
 | **LLM in prod** | One `ChatModel` interface, three real providers (Azure OpenAI, OpenAI, Ollama) + a deterministic fake for CI; retries/timeouts; token & cost accounting | [app/llm/](app/llm/) |
@@ -27,7 +31,7 @@ question ──> embed ──> Qdrant (cosine top-k) ──> prompt (versioned) 
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload          # http://localhost:8000  (UI)  /docs (OpenAPI)
-pytest -q                              # 24 tests, ~1 s
+pytest -q                              # 57 tests, ~1 s, no network
 python -m evals.run_eval               # offline eval against evals/golden_set.jsonl
 ```
 
@@ -58,6 +62,8 @@ docker compose up --build
 # Prom http://localhost:9090     Grafana http://localhost:3000  (dashboard "Knowledge Copilot - LLMOps")
 ```
 
+![Grafana LLMOps dashboard — LLM latency, token throughput, retrieval quality and agent tool calls](docs/grafana-dashboard.png)
+
 ## API
 
 | Endpoint | Purpose |
@@ -66,12 +72,15 @@ docker compose up --build
 | `POST /agent` `{question, history?}` | Tool-using agent; returns `answer`, `trace[]` (every tool call + result), `steps` |
 | `POST /ingest` (multipart file) | Add/replace a `.md` / `.txt` / `.pdf` document |
 | `GET /documents`, `DELETE /documents/{source}` | List / remove indexed documents |
+| `GET /tickets` | Tickets created by the agent's `create_ticket` tool (in-memory stand-in for Jira/ServiceNow) |
 | `GET /health` | Active providers, model names, chunk count, prompt versions |
 | `GET /metrics` | Prometheus exposition |
 | `GET /` | Minimal UI showing answers, citations, scores and agent traces |
 
 Every response carries an `x-request-id` header that also appears in the JSON logs. Set `API_KEY` to
-require an `X-API-Key` header on the mutating/LLM endpoints.
+require an `X-API-Key` header on every endpoint except `/`, `/health` and `/metrics` (the UI has a field for it).
+Provider failures map to proper statuses: rate limit -> `429` with `Retry-After`, provider unreachable -> `503`,
+request rejected by the provider (content filter, context length) -> `400`, other provider errors -> `502`.
 
 ```bash
 curl -s localhost:8000/ask -H 'content-type: application/json' \
@@ -79,14 +88,18 @@ curl -s localhost:8000/ask -H 'content-type: application/json' \
 ```
 ```json
 {
-  "answer": "Every full-time employee receives 24 paid vacation days per calendar year. [1]",
+  "request_id": "3f9c1a7e2b4d",
+  "answer": "Every full-time employee receives 24 paid vacation days per calendar year. Part-time employees receive vacation days pro-rated by their contracted hours. [1]",
   "citations": [{"n": 1, "source": "hr_vacation_policy.md", "heading": "Vacation and Leave Policy > Annual vacation allowance", "score": 0.4088, "text": "..."}],
   "grounded": true,
   "prompt_version": "rag_answer@v2",
   "model": "fake-llm",
-  "usage": {"prompt_tokens": 262, "completion_tokens": 38}
+  "usage": {"prompt_tokens": 480, "completion_tokens": 38},
+  "retrieved": ["hr_vacation_policy.md", "hr_vacation_policy.md", "hr_vacation_policy.md", "hr_vacation_policy.md"]
 }
 ```
+(Output of the offline `fake` model, which answers with the first sentences of the top passage. With a real
+model the answer is a written response; the shape is identical.)
 
 ## Design notes
 
@@ -104,8 +117,11 @@ see when questions start drifting away from the corpus.
 
 **Agent safety.** Tools are declared with JSON schemas; the loop has a hard step budget (`AGENT_MAX_STEPS`),
 feeds tool exceptions back to the model as text (so it can retry with different arguments instead of
-crashing), marks side-effecting tools, uses an AST-based calculator (no `eval`), and returns the entire trace
-so every action is auditable.
+crashing), and returns the entire trace so every action is auditable. Side-effecting tools (`create_ticket`)
+are only registered when `AGENT_ALLOW_ACTIONS=true`, because retrieved documents may contain prompt-injection
+text; search results are handed to the model explicitly labelled as untrusted content. Clients can pass
+`history` but only with `user`/`assistant` roles, never `system`/`tool`. The calculator is an AST evaluator
+(no `eval`) with limits on expression length, exponents and result size, so `9**9**9` cannot freeze the process.
 
 **Prompt versioning.** Prompts are YAML files `name.vN.yaml`; the registry serves the latest or a pinned
 version (`PROMPT_PINS='{"rag_answer": 1}'`), and every answer reports which one it used. Changing a prompt
@@ -113,29 +129,41 @@ means adding a file, so evals can compare versions: `python -m evals.run_eval --
 
 **Evaluation.** [evals/golden_set.jsonl](evals/golden_set.jsonl) holds answerable questions (expected source +
 required facts) and unanswerable ones (must be refused). The runner reports retrieval hit@k, answer
-accuracy, citation accuracy, refusal rate, hallucinations, p50/p95 latency, tokens and estimated cost, and
-can fail the build (`--fail-under`). CI runs it offline on every PR and with real models on `main` when a
+accuracy, citation accuracy, refusal rate, hallucinations (any non-refusal on an unanswerable question,
+cited or not), p50/p95 latency, tokens and estimated cost, and fails the build on low accuracy
+(`--fail-under`) or any hallucination (`--max-hallucinations 0`). CI runs it offline on every PR and with real models on `main` when a
 key is configured.
 
+**Vector store.** Point ids are deterministic (`source#index`), so re-ingesting a document overwrites it in
+place and then deletes only its leftover chunks — a failed re-upload never leaves the document missing.
+Upserts are batched (128 points per request). In-process Qdrant (`:memory:` / folder) is guarded by a lock
+because FastAPI serves sync routes from a threadpool. If the stored collection was built with a different
+embedding size (e.g. you switched from `hash` to `openai`), startup fails with a clear message instead of
+every request returning 500.
+
 **Observability.** Prometheus counters/histograms for every LLM and embedding call (latency by kind, tokens
-by type, estimated USD by model, errors), retrieval quality, agent tool calls and steps, HTTP latency per
-endpoint. [monitoring/alerts.yml](monitoring/alerts.yml) pages on error rate, p95 latency, no-context spikes and
+by type, estimated USD priced by the model name the provider returns, errors, and
+`llm_cost_unknown_model_total` when a model has no price entry), retrieval quality, agent tool calls and steps,
+HTTP latency per endpoint. [monitoring/alerts.yml](monitoring/alerts.yml) pages on error rate, p95 latency, no-context spikes and
 daily spend; the Grafana dashboard is provisioned automatically by `docker compose`.
 
 ## Deploy to Azure
 
-Requires `az` CLI and Docker. Creates Azure OpenAI with `gpt-4.1-mini` + `text-embedding-3-small`
-deployments, a Container Registry, a Container Apps environment with Log Analytics, and a user-assigned
-Managed Identity with *Cognitive Services OpenAI User* + *AcrPull* — no API keys anywhere.
+Requires only the `az` CLI (the image is built in ACR for `linux/amd64`, no local Docker). Creates Azure
+OpenAI with `gpt-4.1-mini` + `text-embedding-3-small` deployments, a Container Registry, a Container Apps
+environment with Log Analytics, and a user-assigned Managed Identity with *Cognitive Services OpenAI User* +
+*AcrPull* — the app talks to Azure OpenAI without any key. Clients authenticate with a generated `X-API-Key`
+stored as a Container Apps secret.
 
 ```bash
 az login
-bash infra/azure/deploy.sh          # prints the public URL
+bash infra/azure/deploy.sh          # 1) infra  2) az acr build  3) container app; prints URL + API key
 ```
 
-Then `curl https://<app>.azurecontainerapps.io/health`. Logs are in Log Analytics (`ContainerAppConsoleLogs_CL`,
-one JSON object per line with `request_id`). For a persistent vector store in Azure, point `QDRANT_URL`
-at a Qdrant Cloud cluster or a Qdrant container with an Azure Files volume.
+Logs are in Log Analytics (`ContainerAppConsoleLogs_CL`, one JSON object per line with `request_id`).
+The template runs one replica with an embedded Qdrant index rebuilt from `data/docs` at startup, so documents
+uploaded at runtime are lost on restart. For a durable, horizontally scalable setup, point `QDRANT_URL` at
+Qdrant Cloud (or a Qdrant container with an Azure Files volume) and raise `maxReplicas`.
 
 ## Project layout
 
@@ -153,7 +181,7 @@ app/
   static/            single-file UI
 data/docs/           sample corpus (HR policy, on-call runbook, product FAQ, IT security)
 evals/               golden set + eval runner
-tests/               24 unit/integration tests (offline)
+tests/               57 unit/integration tests (offline)
 monitoring/          Prometheus config, alert rules, Grafana provisioning + dashboard
 infra/azure/         Bicep template + deploy script
 ```

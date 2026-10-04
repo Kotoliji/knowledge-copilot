@@ -77,7 +77,7 @@ class FakeChatModel:
 
         if not passages or not _overlaps(question, passages[0]):
             return ChatResponse(NO_ANSWER, [], Usage(prompt_tokens, 10), self.model)
-        text = _first_sentences(passages[0], 2)
+        text = _first_sentences(passages[0], 3)
         return ChatResponse(f"{text} [1]", [], Usage(prompt_tokens, len(text) // 4), self.model)
 
 
@@ -130,7 +130,8 @@ class InstrumentedChatModel:
         finally:
             LLM_LATENCY.labels(self.provider, self.model, kind).observe(time.perf_counter() - start)
         LLM_REQUESTS.labels(self.provider, self.model, kind, "ok").inc()
-        record_usage(self.provider, self.model, resp.usage.prompt_tokens, resp.usage.completion_tokens)
+        # resp.model is the real model name (Azure returns it even when self.model is a deployment alias)
+        record_usage(self.provider, resp.model or self.model, resp.usage.prompt_tokens, resp.usage.completion_tokens)
         return resp
 
 
